@@ -1,0 +1,12 @@
+streamlit
+youtube-transcript-api
+openai-whisper
+sentence-transformers
+faiss-cpu
+chromadb
+torch
+transformers
+bitsandbytes
+accelerate
+langchain
+python-dotenv
