@@ -1,9 +1,6 @@
 import os
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from dotenv import load_dotenv
-
-load_dotenv()
+from sentence_transformers import SentenceTransformer
 
 
 class TranscriptEmbedder:
@@ -16,10 +13,8 @@ class TranscriptEmbedder:
             separators=["\n\n", "\n", " ", ""]
         )
         
-        # Initialize embeddings
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=model_name or os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-        )
+        # Initialize embeddings using SentenceTransformer
+        self.embeddings = SentenceTransformer(model_name or os.getenv("EMBEDDING_MODEL", "google/embeddinggemma-300m"))
     
     def process(self, segments: list[dict]) -> tuple[list, list[dict]]:
         """Convert segments to chunks with embeddings."""
@@ -33,6 +28,6 @@ class TranscriptEmbedder:
         chunks = [{"text": chunk} for chunk in text_chunks]
         
         # Generate embeddings
-        embeddings = self.embeddings.embed_documents(text_chunks)
+        embeddings = self.embeddings.encode(text_chunks)
         
         return embeddings, chunks
