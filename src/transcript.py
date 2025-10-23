@@ -11,7 +11,7 @@ class TranscriptRetriever:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.whisper_model = None
         self.ytt_api = YouTubeTranscriptApi()  # Initialize the API instance
-    
+        
     def extract_video_id(self, url: str) -> str:
         """Extract video ID from YouTube URL."""
         if "youtu.be/" in url:
@@ -79,3 +79,4 @@ class TranscriptRetriever:
             # Clean up audio file
             if audio_path.exists():
                 audio_path.unlink()
+  

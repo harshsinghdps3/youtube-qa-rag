@@ -1,7 +1,5 @@
+.e
 .env
 .data
-# build caches
-.cache/
-*.cache
 __pycache__
 ytqa
