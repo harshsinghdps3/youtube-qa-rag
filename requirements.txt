@@ -10,3 +10,4 @@ bitsandbytes
 accelerate
 langchain
 python-dotenv
+llama_index

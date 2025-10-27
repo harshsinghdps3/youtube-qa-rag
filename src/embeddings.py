@@ -1,97 +1,63 @@
-import os
-import numpy as np
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
+from llama_index.core import VectorStoreIndex, Document
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core import Settings
 
-
-class TranscriptEmbedder:
-    def __init__(self, model_name=None, chunk_size=512, overlap=64):
-        # Initialize text splitter
-        self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=int(os.getenv("MAX_CHUNK_SIZE", chunk_size)),
-            chunk_overlap=int(os.getenv("OVERLAP", overlap)),
-            length_function=len,
-            separators=["\n\n", "\n", ". ", "? ", "! ", "; ", ", ", " ", ""]
-        )
-        
-        # Initialize embeddings using SentenceTransformer
-        self.embeddings = SentenceTransformer(model_name or os.getenv("EMBEDDING_MODEL", "google/embeddinggemma-300m"))
+class SimplifiedTranscriptEmbedder:
+    def __init__(self, model_name="BAAI/bge-base-en-v1.5", chunk_size=512):
+        self.model_name = model_name
+        self.chunk_size = chunk_size
+        self.embed_model = HuggingFaceEmbedding(model_name=self.model_name)
     
-    def process(self, segments: list[dict], batch_size: int = 32) -> tuple[list, list[dict]]:
-        """Convert segments to chunks with embeddings."""
-        return self.process_with_timestamps(segments, batch_size=batch_size)   
-    
-
-    def process_with_timestamps(self, segments: list[dict], batch_size: int = 32) -> tuple[list, list[dict]]:
-        """Enhanced version with timestamp tracking."""
-        if not segments:
-            return [], []
-
-        # Filter out segments without text and build the full text and a character-to-segment map.
-        full_text = ""
-        char_to_segment_map = []
-        valid_segments = []
-        segment_index = 0
-        for seg in segments:
-            text = seg.get("text", "").strip()
-            if not text:
-                continue
-            
-            valid_segments.append(seg)
-            
-            if full_text:
-                full_text += " "
-                char_to_segment_map.append(segment_index - 1) # Space belongs to the previous segment.
-
-            start_char_pos = len(full_text)
-            full_text += text
-            for _ in range(start_char_pos, len(full_text)):
-                char_to_segment_map.append(segment_index)
-            segment_index += 1
-
-        if not full_text:
-            return [], []
-
-        # Split the text into chunks.
-        text_chunks = self.splitter.split_text(full_text)
-
-        # Map chunks back to timestamps.
-        chunks_with_metadata = []
-        current_pos = 0
-        for chunk_text in text_chunks:
-            start_char = full_text.find(chunk_text, current_pos)
-            if start_char == -1:
-                continue
-            
-            end_char = start_char + len(chunk_text)
-            current_pos = end_char
-
-            start_segment_idx = char_to_segment_map[start_char]
-            end_segment_idx = char_to_segment_map[min(end_char - 1, len(char_to_segment_map) - 1)]
-
-            start_time = valid_segments[start_segment_idx].get("start", 0.0)
-            end_segment = valid_segments[end_segment_idx]
-            end_time = end_segment.get("start", 0.0) + end_segment.get("duration", 0.0)
-
-            chunks_with_metadata.append({
-                "text": chunk_text,
-                "start_time": start_time,
-                "end_time": end_time,
-            })
-
-        if not chunks_with_metadata:
-            return [], []
-
-        # Generate embeddings for the chunks in batches.
-        all_embeddings = []
-        for i in range(0, len(chunks_with_metadata), batch_size):
-            batch_chunks = [chunk["text"] for chunk in chunks_with_metadata[i:i+batch_size]]
-            batch_embeddings = self.embeddings.encode(batch_chunks)
-            all_embeddings.append(batch_embeddings)
+    def process(self, segments: list[dict]) -> tuple:
+        # Convert segments to Documents
+        documents = [
+            Document(
+                text=seg.get("text", "").strip(),
+                metadata={
+                    "start_time": seg.get("start", 0.0),
+                    "duration": seg.get("duration", 0.0)
+                }
+            )
+            for seg in segments if seg.get("text", "").strip()
+        ]
         
-        if not all_embeddings:
+        if not documents:
             return [], []
+        
+        # Parse and embed nodes
+        node_parser = SentenceSplitter(chunk_size=self.chunk_size, chunk_overlap=64)
+        nodes = node_parser.get_nodes_from_documents(documents)
+        
+        for node in nodes:
+            node.embedding = self.embed_model.get_text_embedding(node.get_content())
+        
+        Settings.embed_model = self.embed_model
+        VectorStoreIndex(nodes)
+        
+        # Extract embeddings and metadata
+        embeddings = [node.embedding for node in nodes if node.embedding]
+        chunks_metadata = [
+            {
+                "text": node.text,
+                "start_time": node.metadata.get("start_time", 0.0),
+                "end_time": node.metadata.get("start_time", 0.0) + node.metadata.get("duration", 0.0)
+            }
+            for node in nodes if node.embedding
+        ]
+        
+        return embeddings, chunks_metadata
 
-        embeddings = np.vstack(all_embeddings)
-
-        return embeddings, chunks_with_metadata
+# Test
+if __name__ == "__main__":
+    test_segments = [
+        {"text": "Test sentence one", "start": 0.0, "duration": 1.0},
+        {"text": "Test sentence two", "start": 1.0, "duration": 1.0}
+    ]
+    
+    embedder = SimplifiedTranscriptEmbedder()
+    emb, meta = embedder.process(test_segments)
+    
+    print(f"Generated {len(emb)} embeddings")
+    if emb:
+        print(f"First embedding dimension: {len(emb[0])}")
