@@ -3,9 +3,21 @@ import numpy as np
 
 # Sample transcript segments
 test_segments = [
-    {"start": 0.0, "duration": 5.0, "text": "Welcome to this tutorial on machine learning."},
-    {"start": 5.0, "duration": 5.0, "text": "Today we'll discuss neural networks and deep learning."},
-    {"start": 10.0, "duration": 5.0, "text": "First, let's understand the basics of embeddings."}
+    {
+        "start": 0.0,
+        "duration": 5.0,
+        "text": "Welcome to this tutorial on machine learning.",
+    },
+    {
+        "start": 5.0,
+        "duration": 5.0,
+        "text": "Today we'll discuss neural networks and deep learning.",
+    },
+    {
+        "start": 10.0,
+        "duration": 5.0,
+        "text": "First, let's understand the basics of embeddings.",
+    },
 ]
 
 # Initialize embedder

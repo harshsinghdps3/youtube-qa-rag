@@ -8,6 +8,7 @@ torch
 transformers
 bitsandbytes
 accelerate
-langchain
+langchain==0.3.0
 python-dotenv
-llama_index
+llama_index==0.14.6
+pydantic==2.12.3

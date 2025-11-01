@@ -1,45 +1,70 @@
+from llama_index.core import VectorStoreIndex, Document, StorageContext, QueryBundle
 import os
-from pathlib import Path
-from dotenv import load_dotenv
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-import numpy as np
 
-load_dotenv()
 
 class VectorRetriever:
     def __init__(self, cache_dir="./data/vector_stores"):
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.vector_store = None
-        # This embedding function is needed for loading and searching.
-        # It should be the same model as in TranscriptEmbedder.
-        self.embedding_function = HuggingFaceEmbeddings(model_name=os.getenv("EMBEDDING_MODEL", "google/embeddinggemma-300m"))
-        self.top_k = int(os.getenv("TOP_K", 5))
+        self.cache_dir = cache_dir
+        os.makedirs(cache_dir, exist_ok=True)
+        self.index = None
 
-    def build_index(self, embeddings: np.ndarray, metadata: list[dict], video_id: str):
-        """Build FAISS index from embeddings and persist."""
-        texts = [meta['text'] for meta in metadata]
-        text_embedding_pairs = list(zip(texts, embeddings.tolist()))
+    def build_index(self, embeddings: list, metadata: list[dict], video_id: str):
+        documents = [
+            Document(
+                text=m["text"],
+                metadata={"start_time": m["start_time"], "end_time": m["end_time"]},
+                embedding=emb,
+            )
+            for emb, m in zip(embeddings, metadata)
+        ]
 
-        # from_embeddings requires an embedding function to be passed, but it's only used for query embeddings later.
-        self.vector_store = FAISS.from_embeddings(text_embedding_pairs, self.embedding_function, metadatas=metadata)
-        self.vector_store.save_local(self.cache_dir / video_id)
+        self.index = VectorStoreIndex(
+            documents, embed_model="local:BAAI/bge-base-en-v1.5"
+        )
+        self.index.storage_context.persist(persist_dir=f"{self.cache_dir}/{video_id}")
 
     def load_index(self, video_id: str):
-        """Load existing index."""
-        index_path = self.cache_dir / video_id
-        if not index_path.exists():
-            raise FileNotFoundError(f"Index not found for {video_id}")
-        # allow_dangerous_deserialization is needed for FAISS with pickle
-        self.vector_store = FAISS.load_local(index_path, self.embedding_function, allow_dangerous_deserialization=True)
+        from llama_index.core import load_index_from_storage
 
-    def retrieve(self, query: str) -> list[dict]:
-        """Retrieve top-k chunks with metadata. The query is a string, which will be embedded."""
-        results_with_scores = self.vector_store.similarity_search_with_score(query, k=self.top_k)
+        storage_context = StorageContext.from_defaults(
+            persist_dir=f"{self.cache_dir}/{video_id}"
+        )
+        self.index = load_index_from_storage(
+            storage_context, embed_model="local:BAAI/bge-base-en-v1.5"
+        )
+
+    def retrieve(self, query_embedding: list, top_k: int = 5) -> list[dict]:
+        retriever = self.index.as_retriever(similarity_top_k=top_k)
+        nodes = retriever.retrieve(QueryBundle(query_str="", embedding=query_embedding))
+
         results = []
-        for doc, score in results_with_scores:
-            result = {"text": doc.page_content, "score": score}
-            result.update(doc.metadata)
-            results.append(result)
+        for node in nodes:
+            results.append(
+                {
+                    "text": node.node.text,
+                    "start_time": node.node.metadata["start_time"],
+                    "end_time": node.node.metadata["end_time"],
+                    "score": node.score,
+                }
+            )
         return results
+
+
+# Test 1: Verify index creation
+import os
+
+retriever = VectorRetriever("./test_cache")
+emb = [[0.1, 0.2], [0.3, 0.4]]
+meta = [
+    {"text": "test1", "start_time": 0, "end_time": 10},
+    {"text": "test2", "start_time": 10, "end_time": 20},
+]
+retriever.build_index(emb, meta, "test_vid")
+assert os.path.exists("./test_cache/test_vid/docstore.json")
+
+# Test 2: Retrieval accuracy
+query = [0.12, 0.22]  # Close to first embedding
+results = retriever.retrieve(query, top_k=1)
+print(results)
+assert results[0]["text"] == "test1"
+assert results[0]["score"] > 0.9  # High similarity expected
