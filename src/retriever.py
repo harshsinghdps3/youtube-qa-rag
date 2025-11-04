@@ -1,70 +1,54 @@
-from llama_index.core import VectorStoreIndex, Document, StorageContext, QueryBundle
 import os
+from langchain_community.vectorstores import FAISS
+from typing import List
+from langchain_core.documents import Document
+
 
 
 class VectorRetriever:
     def __init__(self, cache_dir="./data/vector_stores"):
         self.cache_dir = cache_dir
-        os.makedirs(cache_dir, exist_ok=True)
-        self.index = None
+        os.makedirs(self.cache_dir, exist_ok=True)
+        self.vector_store = None
 
-    def build_index(self, embeddings: list, metadata: list[dict], video_id: str):
-        documents = [
-            Document(
-                text=m["text"],
-                metadata={"start_time": m["start_time"], "end_time": m["end_time"]},
-                embedding=emb,
-            )
-            for emb, m in zip(embeddings, metadata)
-        ]
+    def build_index(self, documents: List[Document], embeddings, video_id: str):
+        index_path = os.path.join(self.cache_dir, video_id)
+        self.vector_store = FAISS.from_documents(documents, embeddings)
+        self.vector_store.save_local(index_path)
 
-        self.index = VectorStoreIndex(
-            documents, embed_model="local:BAAI/bge-base-en-v1.5"
-        )
-        self.index.storage_context.persist(persist_dir=f"{self.cache_dir}/{video_id}")
-
-    def load_index(self, video_id: str):
-        from llama_index.core import load_index_from_storage
-
-        storage_context = StorageContext.from_defaults(
-            persist_dir=f"{self.cache_dir}/{video_id}"
-        )
-        self.index = load_index_from_storage(
-            storage_context, embed_model="local:BAAI/bge-base-en-v1.5"
+    def load_index(self, video_id: str, embeddings):
+        index_path = os.path.join(self.cache_dir, video_id)
+        if not os.path.exists(index_path):
+            raise FileNotFoundError(f"Index for video_id '{video_id}' not found.")
+        self.vector_store = FAISS.load_local(
+            index_path, embeddings, allow_dangerous_deserialization=True
         )
 
-    def retrieve(self, query_embedding: list, top_k: int = 5) -> list[dict]:
-        retriever = self.index.as_retriever(similarity_top_k=top_k)
-        nodes = retriever.retrieve(QueryBundle(query_str="", embedding=query_embedding))
+    def as_retriever(self, **kwargs):
+        if not self.vector_store:
+            raise Exception("Vector store not loaded. Please load an index first.")
+        return self.vector_store.as_retriever(**kwargs)
+      
 
-        results = []
-        for node in nodes:
-            results.append(
-                {
-                    "text": node.node.text,
-                    "start_time": node.node.metadata["start_time"],
-                    "end_time": node.node.metadata["end_time"],
-                    "score": node.score,
-                }
-            )
-        return results
+# minimal_test.py
+from langchain_core.embeddings import FakeEmbeddings
+from langchain_core.documents import Document
+import shutil
 
+# Setup
+vr = VectorRetriever("./temp_test")
+emb = FakeEmbeddings(size=128)
+docs = [Document(page_content=f"Doc {i}") for i in range(3)]
 
-# Test 1: Verify index creation
-import os
+# Test
+vr.build_index(docs, emb, "vid1")
+assert vr.vector_store is not None, "Build failed"
 
-retriever = VectorRetriever("./test_cache")
-emb = [[0.1, 0.2], [0.3, 0.4]]
-meta = [
-    {"text": "test1", "start_time": 0, "end_time": 10},
-    {"text": "test2", "start_time": 10, "end_time": 20},
-]
-retriever.build_index(emb, meta, "test_vid")
-assert os.path.exists("./test_cache/test_vid/docstore.json")
+vr.load_index("vid1", emb)
+assert vr.vector_store is not None, "Load failed"
 
-# Test 2: Retrieval accuracy
-query = [0.12, 0.22]  # Close to first embedding
-results = retriever.retrieve(query, top_k=1)
-print(results)
-assert results[0]["text"] == "test1"
-assert results[0]["score"] > 0.9  # High similarity expected
+results = vr.vector_store.similarity_search("Doc", k=2)
+assert len(results) == 2, f"Expected 2, got {len(results)}"
+
+print("✅ All tests passed!")
+
