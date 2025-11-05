@@ -64,27 +64,3 @@ class LangChainLLM(LLM):
         return {"model_name": self.llm.model_name}
 
 
-if __name__ == "__main__":
-    # This is a quick test to check the API key and connection.
-    # Before running this, ensure that your OPENROUTER_API_KEY is
-    # set in your .env file.
-    print("Testing OpenRouterLLM...")
-    try:
-        # 1. Initialize OpenRouterLLM
-        # You can change the model_name here, e.g., "google/gemma-7b-it"
-        llm = OpenRouterLLM()
-
-        # 2. Call generate with a simple prompt
-        prompt = "What is the capital of India?"
-        print(f"Prompt: {prompt}")
-
-        response = llm.generate(prompt)
-
-        # 3. Print the response
-        print(f"Response: {response}")
-
-        print("\nTest finished successfully!")
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        print("Please check your OPENROUTER_API_KEY and model name in the .env file.")

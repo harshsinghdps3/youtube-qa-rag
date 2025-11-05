@@ -30,25 +30,3 @@ class VectorRetriever:
         return self.vector_store.as_retriever(**kwargs)
       
 
-# minimal_test.py
-from langchain_core.embeddings import FakeEmbeddings
-from langchain_core.documents import Document
-import shutil
-
-# Setup
-vr = VectorRetriever("./temp_test")
-emb = FakeEmbeddings(size=128)
-docs = [Document(page_content=f"Doc {i}") for i in range(3)]
-
-# Test
-vr.build_index(docs, emb, "vid1")
-assert vr.vector_store is not None, "Build failed"
-
-vr.load_index("vid1", emb)
-assert vr.vector_store is not None, "Load failed"
-
-results = vr.vector_store.similarity_search("Doc", k=2)
-assert len(results) == 2, f"Expected 2, got {len(results)}"
-
-print("✅ All tests passed!")
-
