@@ -1,21 +1,30 @@
 import os
 from openai import OpenAI
 from dotenv import load_dotenv
+from langchain_core.language_models.llms import LLM
+from collections.abc import Mapping
+from typing import Any
+from typing_extensions import override
+from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 
-load_dotenv()
+
+_ = load_dotenv()
 
 
 class OpenRouterLLM:
-    def __init__(self, model_name=None):
-        self.model_name = model_name or os.getenv(
-            "MODEL_NAME", "openai/gpt-oss-20b"
-        )
+    model_name: str
+    client: OpenAI
+
+    def __init__(self, model_name: str | None = None):
+        self.model_name = model_name or os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
 
-    def generate(self, prompt: str, max_new_tokens=256, temperature=0.3) -> str:
+    def generate(
+        self, prompt: str, max_new_tokens: int = 256, temperature: float = 0.3
+    ) -> str:
         """Generate answer with low temperature for factual consistency."""
         response = self.client.chat.completions.create(
             model=self.model_name,
@@ -29,12 +38,53 @@ class OpenRouterLLM:
             temperature=temperature,
             top_p=0.9,
         )
-        return response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
+        return content.strip() if content else ""
 
-# Initialize with default model
-llm = OpenRouterLLM()
 
-# Simple factual query
-prompt = "Hello"
-answer = llm.generate(prompt, max_new_tokens=50, temperature=0.2)
-print(answer)
+class LangChainLLM(LLM):
+    llm: OpenRouterLLM
+
+    @property
+    @override
+    def _llm_type(self) -> str:
+        return "custom"
+
+    def _call(
+        self,
+        prompt: str,
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> str:
+        return self.llm.generate(prompt, **kwargs)
+
+    @property
+    def _identifying_params(self) -> Mapping[str, Any]:
+        return {"model_name": self.llm.model_name}
+
+
+if __name__ == "__main__":
+    # This is a quick test to check the API key and connection.
+    # Before running this, ensure that your OPENROUTER_API_KEY is
+    # set in your .env file.
+    print("Testing OpenRouterLLM...")
+    try:
+        # 1. Initialize OpenRouterLLM
+        # You can change the model_name here, e.g., "google/gemma-7b-it"
+        llm = OpenRouterLLM()
+
+        # 2. Call generate with a simple prompt
+        prompt = "What is the capital of India?"
+        print(f"Prompt: {prompt}")
+
+        response = llm.generate(prompt)
+
+        # 3. Print the response
+        print(f"Response: {response}")
+
+        print("\nTest finished successfully!")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        print("Please check your OPENROUTER_API_KEY and model name in the .env file.")
