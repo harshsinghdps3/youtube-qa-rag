@@ -1,4 +1,4 @@
-
+import os
 
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
@@ -8,7 +8,7 @@ from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .embeddings import TranscriptEmbedder
-from .llm import LangChainLLM, OpenRouterLLM
+from .llm import LangChainLLM, OllamaLLM
 from .retriever import VectorRetriever
 from .transcript import TranscriptRetriever
 
@@ -17,7 +17,9 @@ class RAGPipeline:
     def __init__(self):
         self.transcript_retriever = TranscriptRetriever()
         self.embedder = TranscriptEmbedder().get_model()
-        self.llm = OpenRouterLLM()
+        self.llm = OllamaLLM(
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        )
         self.langchain_llm = LangChainLLM(llm=self.llm)
         self.retriever = VectorRetriever()
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -134,6 +136,3 @@ Answer with citations (Hindi/English mix allowed):"""
         minutes = int(seconds // 60)
         secs = int(seconds % 60)
         return f"{minutes:02d}:{secs:02d}"
-
-
-

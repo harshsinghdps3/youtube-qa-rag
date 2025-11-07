@@ -1,54 +1,66 @@
 import os
-from openai import OpenAI
-from dotenv import load_dotenv
-from langchain_core.language_models.llms import LLM
 from collections.abc import Mapping
 from typing import Any
-from typing_extensions import override
-from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 
+import requests
+from dotenv import load_dotenv
+from langchain_core.callbacks.manager import CallbackManagerForLLMRun
+from langchain_core.language_models.llms import LLM
+from typing_extensions import override
 
 _ = load_dotenv()
 
 
-class OpenRouterLLM:
-    model_name: str
-    client: OpenAI
+class OllamaLLM:
+    """Use local LLM via Ollama"""
 
-    def __init__(self, model_name: str | None = None):
-        self.model_name = model_name or os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
-        self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.getenv("OPENROUTER_API_KEY"),
-        )
+    model_name: str
+    base_url: str
+
+    def __init__(self, base_url: str = "http://localhost:11434"):
+        self.model_name = "qwen3:8b"
+        self.base_url = base_url
+        # Check if Ollama server is running or not
+        try:
+            response = requests.get(f"{self.base_url}/api/tags", timeout=2)
+            if response.status_code != 200:
+                raise ConnectionError("Ollama server is not accessible")
+        except requests.exceptions.ConnectionError:
+            raise RuntimeError(
+                f"Ollama server is not running at {self.base_url}! "
+                "First run `ollama serve`"
+            )
 
     def generate(
         self, prompt: str, max_new_tokens: int = 256, temperature: float = 0.3
     ) -> str:
-        """Generate answer with low temperature for factual consistency."""
-        response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=0.9,
-        )
-        content = response.choices[0].message.content
-        return content.strip() if content else ""
+        """Generate answer via Ollama"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model_name,
+                    "prompt": prompt,
+                    "stream": False,
+                },
+                timeout=300,
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get("response", "").strip()
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Failed to generate answer from Ollama: {str(e)}")
 
 
 class LangChainLLM(LLM):
-    llm: OpenRouterLLM
+    """LangChain compatible LLM wrapper"""
+
+    llm: OllamaLLM
 
     @property
     @override
     def _llm_type(self) -> str:
-        return "custom"
+        return "ollama"
 
     def _call(
         self,
@@ -62,5 +74,3 @@ class LangChainLLM(LLM):
     @property
     def _identifying_params(self) -> Mapping[str, Any]:
         return {"model_name": self.llm.model_name}
-
-
