@@ -1,9 +1,14 @@
-import os
 import json
-import whisper
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+import os
 from pathlib import Path
+from typing import Any, Dict, List
+
+import whisper
+from youtube_transcript_api import (
+    NoTranscriptFound,
+    TranscriptsDisabled,
+    YouTubeTranscriptApi,
+)
 
 
 class TranscriptRetriever:
@@ -69,21 +74,24 @@ class TranscriptRetriever:
         audio_path = self.cache_dir / f"{video_id}.mp3"
 
         # Download audio with error handling
-        result = os.system(f"yt-dlp -x --audio-format mp3 -o {audio_path} {video_url}")
-        if result != 0 or not audio_path.exists():
+        download_status = os.system(
+            f"yt-dlp -x --audio-format mp3 -o {audio_path} {video_url}"
+        )
+        if download_status != 0 or not audio_path.exists():
             raise RuntimeError(f"Failed to download audio from {video_url}")
 
         try:
-            result = self.whisper_model.transcribe(
+            result: Dict[str, Any] = self.whisper_model.transcribe(
                 str(audio_path), word_timestamps=True
             )
+            segments_data: List[Dict[str, Any]] = result.get("segments", [])
             segments = [
                 {
-                    "start": seg["start"],
-                    "duration": seg["end"] - seg["start"],
-                    "text": seg["text"],
+                    "start": seg.get("start", 0),
+                    "duration": seg.get("end", 0) - seg.get("start", 0),
+                    "text": seg.get("text", ""),
                 }
-                for seg in result["segments"]
+                for seg in segments_data
             ]
 
             with open(cache_path, "w") as f:
