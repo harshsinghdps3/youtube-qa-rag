@@ -5,8 +5,9 @@ from langchain_core.prompts import  PromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from .embeddings import TranscriptEmbedder
+from .embeddings import TranscriptEmbedder, BGEQueryEmbeddings
 from .llm import LangChainLLM, OllamaLLM
+from .reranker import Reranker
 from .retriever import VectorRetriever
 from .transcript import TranscriptRetriever
 
@@ -15,14 +16,18 @@ class RAGPipeline:
     def __init__(self):
         self.transcript_retriever = TranscriptRetriever()
         self.embedder = TranscriptEmbedder().get_model()
+        # Query embedder with prefix for better retrieval
+        self.query_embedder = BGEQueryEmbeddings(self.embedder)
         self.llm = OllamaLLM(
             base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         )
         self.langchain_llm = LangChainLLM(llm=self.llm)
         self.retriever = VectorRetriever()
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=100
+            chunk_size=600, chunk_overlap=150
         )
+        # Cross-encoder reranker for better relevance
+        self.reranker = Reranker()
 
     def index_video(self, video_url: str) -> str:
         """Index the video using transcript and embeddings"""
@@ -59,7 +64,7 @@ class RAGPipeline:
         return video_id
 
     def answer_question(self, video_id: str, question: str) -> dict:
-        """Answer the question using RAG"""
+        """Answer the question using improved RAG with MMR + reranking"""
         try:
             self.retriever.load_index(video_id, self.embedder)
         except FileNotFoundError:
@@ -69,28 +74,43 @@ class RAGPipeline:
                 "question": question,
             }
 
-        # Setup retriever
-        retriever = self.retriever.as_retriever(
-            search_kwargs={"k": 5}  # Retrieve top 5 chunks
+        # Step 1: Add query prefix for BGE model optimization
+        prefixed_query = f"query: {question}"
+
+        # Step 2: MMR search for diverse candidates (fetch 30, keep 15)
+        print(f"🔍 Performing MMR search...")
+        mmr_docs = self.retriever.mmr_search(
+            query=prefixed_query,
+            k=15,
+            fetch_k=30,
+            lambda_mult=0.5  # Balance between relevance and diversity
         )
 
-        # Prompt for LangChain v1.0+
-        prompt_template = """You are a precise video Q&A assistant. Answer the question using ONLY the provided video transcript excerpts.
+        # Step 3: Cross-encoder reranking (keep top 8)
+        print(f"🎯 Reranking {len(mmr_docs)} candidates...")
+        reranked_docs = self.reranker.rerank(question, mmr_docs, top_k=8)
 
-Every claim MUST include a time-stamped citation in format [MM:SS].
+        # Prompt for LangChain v1.0+ - Enhanced for better answers
+        prompt_template = """You are a helpful video Q&A assistant. Answer the question using the provided video transcript excerpts.
+
+Guidelines:
+1. Every claim MUST include a time-stamped citation in format [MM:SS].
+2. If the exact term is not mentioned, explain related concepts from the transcript.
+3. Provide detailed, comprehensive answers - not just one-liners.
+4. If truly no relevant information exists, clearly state that.
 
 Video Transcript:
 {context}
 
 Question: {question}
 
-Answer with citations (Hindi/English mix allowed):"""
+Provide a detailed answer with citations :"""
 
         PROMPT = PromptTemplate(
             template=prompt_template, input_variables=["context", "question"]
         )
 
-        # Format documents as string
+        # Format reranked documents as string
         def format_docs(docs):
             formatted = ""
             for i, doc in enumerate(docs, 1):
@@ -98,23 +118,15 @@ Answer with citations (Hindi/English mix allowed):"""
                 formatted += f"\n[{start_time}] {doc.page_content}"
             return formatted
 
-        # Manual RAG chain
-        rag_chain = (
-            {
-                "context": retriever | RunnableLambda(format_docs),
-                "question": RunnablePassthrough(),
-            }
-            | PROMPT
-            | self.langchain_llm
-            | StrOutputParser()
-        )
+        context = format_docs(reranked_docs)
 
-        # Generate answer
-        answer = rag_chain.invoke(question)
+        # Generate answer using LLM
+        prompt = PROMPT.format(context=context, question=question)
+        answer = self.langchain_llm.invoke(prompt)
 
-        # Extract sources
+        # Extract sources from reranked docs
         sources = []
-        for doc in retriever.invoke(question):
+        for doc in reranked_docs:
             start_time = doc.metadata.get("start", 0)
             duration = doc.metadata.get("duration", 0)
             end_time = start_time + duration
